@@ -86,6 +86,18 @@ export async function fetchDriveMedia(fileId: string, range?: string | null) {
   });
 }
 
+export async function fetchDriveThumbnail(fileId: string) {
+  const token = await driveAccessToken();
+  const headers = { Authorization: `Bearer ${token}` };
+  const metadata = await fetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}?fields=thumbnailLink&supportsAllDrives=true`, {
+    headers, cache: "no-store"
+  });
+  if (!metadata.ok) return null;
+  const file = await metadata.json() as { thumbnailLink?: string };
+  if (!file.thumbnailLink) return null;
+  return fetch(file.thumbnailLink, { headers, cache: "no-store" });
+}
+
 export function sha256(bytes: Buffer) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }

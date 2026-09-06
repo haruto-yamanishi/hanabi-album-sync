@@ -1,3 +1,4 @@
+import { AssetMedia } from "@/components/AssetMedia";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { AdminAssetActions } from "@/components/AdminAssetActions";
@@ -49,35 +50,57 @@ export default async function AlbumPage({ searchParams }: { searchParams: Promis
     return true;
   });
 
+  const pageSize = 24;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const requestedPage = Number(scalar(params.page));
+  const page = Math.min(pageCount, Number.isSafeInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1);
+  const visible = filtered.slice((page - 1) * pageSize, page * pageSize);
+  function pageHref(target: number) {
+    const next = new URLSearchParams();
+    for (const key of ["category", "week", "contributor", "award", "q"]) {
+      const value = scalar(params[key]);
+      if (value) next.set(key, value);
+    }
+    next.set("page", String(target));
+    return `/?${next}`;
+  }
+
   return <main className="shell">
-    <header className="topbar"><div><p className="eyebrow">Team Hanabi / Media Archive</p><h1>Album-Sync</h1></div><nav><span>{user.email}</span>{role === "admin" && <a href="/admin">Admin</a>}</nav></header>
+    <header className="topbar"><div><p className="eyebrow">FRC TEAM 9494 / HANABI</p><h1>Album-Sync<span className="title-dot">.</span></h1></div><nav aria-label="メインナビゲーション"><a href="https://log.9494hanabi.com">Hanabi Log ↗</a><span>{user.email}</span>{role === "admin" && <a href="/admin">Admin</a>}</nav></header>
+    <div className="archive-heading"><div><p className="eyebrow">OUR MOMENTS</p><h2>挑戦の日々を、ここに。</h2><p>チームの活動を、写真と映像で振り返る。</p></div><span className="archive-label">MEDIA ARCHIVE</span></div>
     <form className="filters" action="/" method="get">
-      <label>Category<select name="category" defaultValue={selectedCategory}><option value="">All</option><option value="snaps">Snaps</option><option value="shorts">Shorts</option><option value="films">Films</option></select></label>
-      <label>Week<select name="week" defaultValue={selectedWeek}><option value="">All</option>{weeks.map((week) => <option key={week} value={week}>{week}</option>)}</select></label>
-      <label>Contributor<select name="contributor" defaultValue={selectedContributor}><option value="">All</option>{contributors.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
-      <label>Award<select name="award" defaultValue={selectedAward}><option value="">All</option><option value="winner">Winner</option></select></label>
-      <label className="search-field">Search<input type="search" name="q" defaultValue={scalar(params.q)} placeholder="caption / file / name" /></label>
-      <button type="submit">Filter</button>
-      {(selectedCategory || selectedWeek || selectedContributor || selectedAward || query) && <a className="clear-filter" href="/">Clear</a>}
+      <label>カテゴリ<select name="category" defaultValue={selectedCategory}><option value="">すべて</option><option value="snaps">Snaps</option><option value="shorts">Shorts</option><option value="films">Films</option></select></label>
+      <label>活動週<select name="week" defaultValue={selectedWeek}><option value="">すべて</option>{weeks.map((week) => <option key={week} value={week}>{week}</option>)}</select></label>
+      <label>投稿者<select name="contributor" defaultValue={selectedContributor}><option value="">すべて</option>{contributors.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
+      <label>受賞<select name="award" defaultValue={selectedAward}><option value="">すべて</option><option value="winner">Winner</option></select></label>
+      <label className="search-field">検索<input type="search" name="q" defaultValue={scalar(params.q)} placeholder="キャプション・ファイル名・投稿者" /></label>
+      <button type="submit">絞り込む</button>
+      {(selectedCategory || selectedWeek || selectedContributor || selectedAward || query) && <a className="clear-filter" href="/">クリア</a>}
     </form>
-    <p className="result-count">{filtered.length} / {normalized.length} assets</p>
+    <p className="result-count">{filtered.length}件{filtered.length > 0 && ` · ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, filtered.length)}件を表示`}{normalized.length === 500 && "（最新500件から検索）"}</p>
     {error && <p className="error">{error.message}</p>}
     <section className="grid">
-      {filtered.map(({ asset, submission, contributor, drive, winner, weekKey }) => <article className="asset" id={`asset-${asset.id}`} key={asset.id}>
+      {visible.map(({ asset, submission, contributor, drive, winner, weekKey }) => <article className="asset" id={`asset-${asset.id}`} key={asset.id}>
         <div className="media">
-          {asset.media_type === "video" ? <video controls preload="metadata" src={`/api/assets/${asset.id}/media`} /> : <img loading="lazy" src={`/api/assets/${asset.id}/media`} alt={asset.original_name} />}
+          <AssetMedia assetId={asset.id} mediaType={asset.media_type} name={asset.original_name} />
           <span className={`category ${asset.category}`}>{asset.category}</span>
           {winner && <span className="award">WINNER</span>}
         </div>
         <div className="meta">
           <div className="meta-line"><strong>{contributor?.display_name ?? "Unknown"}</strong><span>{weekKey}</span></div>
           {submission?.caption && <p>{submission.caption}</p>}
-          <div className="links">{submission?.permalink && <a href={submission.permalink} target="_blank">Slack</a>}{drive?.drive_file_id && <a href={`https://drive.google.com/open?id=${drive.drive_file_id}`} target="_blank">Drive</a>}</div>
-          <AdminAssetActions assetId={asset.id} canJudge={role === "judge" || role === "admin"} canAdmin={role === "admin"} />
+          <div className="links">{submission?.permalink && <a href={submission.permalink} target="_blank" rel="noopener noreferrer">Slack</a>}{drive?.drive_file_id && <a href={`https://drive.google.com/open?id=${drive.drive_file_id}`} target="_blank" rel="noopener noreferrer">Drive</a>}</div>
+          {(role === "judge" || role === "admin") && <AdminAssetActions assetId={asset.id} canJudge canAdmin={role === "admin"} />}
         </div>
       </article>)}
     </section>
+    {pageCount > 1 && <nav className="pagination" aria-label="ページ切り替え">
+      {page > 1 ? <a className="button" href={pageHref(page - 1)}>← 前へ</a> : <span />}
+      <span>{page} / {pageCount}</span>
+      {page < pageCount ? <a className="button" href={pageHref(page + 1)}>次へ →</a> : <span />}
+    </nav>}
     {!error && filtered.length === 0 && <p className="empty-state">条件に一致する作品はありません。</p>}
+    <footer className="footer"><span>9494 HANABI / ALBUM-SYNC</span><a href="https://9494hanabi.com" target="_blank" rel="noopener noreferrer">Hanabi公式サイト ↗</a></footer>
   </main>;
 }
 
