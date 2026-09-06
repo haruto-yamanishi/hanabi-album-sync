@@ -20,7 +20,11 @@ export async function POST(request: Request) {
     const page = await listSlackChannelHistory(channel, run.cursor);
     for (const parent of page.messages) {
       const category = classifyCategory(parent.text);
-      if (!category || parent.thread_ts) continue;
+      // Slack may include thread_ts on a parent message too. It is a real reply only
+      // when thread_ts points at a different timestamp than the message itself.
+      const isThreadReply = Boolean(parent.thread_ts && parent.thread_ts !== parent.ts);
+      if (!category || isThreadReply) continue;
+
       counters.total_parents += 1;
       const { getSlackThread } = await import("@/lib/slack");
       const replies = await getSlackThread(channel, parent.ts);
