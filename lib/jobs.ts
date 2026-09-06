@@ -4,7 +4,19 @@ export async function enqueueSync(input: { channelId: string; parentTs: string; 
   const db = createServiceClient();
   const sourceId = `${input.channelId}:${input.messageTs}`;
   const { data: existing } = await db.from("sync_jobs").select("id,state").eq("source_id", sourceId).maybeSingle();
-  if (existing) return existing.id as string;
+
+  if (existing) {
+    if (existing.state === "FAILED") {
+      await db.from("sync_jobs").update({
+        state: "QUEUED",
+        error_code: null,
+        error_message: null,
+        finished_at: null
+      }).eq("id", existing.id);
+      await publishInternal("/api/internal/sync", { jobId: existing.id });
+    }
+    return existing.id as string;
+  }
 
   const { data, error } = await db.from("sync_jobs").insert({
     source_type: input.sourceType ?? "event",
