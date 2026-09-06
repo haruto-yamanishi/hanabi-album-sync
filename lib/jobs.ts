@@ -108,8 +108,10 @@ export async function publishInternal(path: string, body: unknown) {
   const base = process.env.PUBLIC_BASE_URL;
   const secret = process.env.INTERNAL_JOB_SECRET;
   if (!token || !base || !secret) return false;
+
   const target = `${base.replace(/\/$/, "")}${path}`;
-  const response = await fetch(`https://qstash.upstash.io/v2/publish/${encodeURIComponent(target)}`, {
+  const qstashBase = (process.env.QSTASH_URL || "https://qstash.upstash.io").replace(/\/$/, "");
+  const response = await fetch(`${qstashBase}/v2/publish/${target}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -119,7 +121,11 @@ export async function publishInternal(path: string, body: unknown) {
     },
     body: JSON.stringify(body)
   });
-  if (!response.ok) throw new Error(`QStash publish failed: ${response.status}`);
+
+  if (!response.ok) {
+    const details = (await response.text()).slice(0, 500);
+    throw new Error(`QStash publish failed: ${response.status}${details ? ` ${details}` : ""}`);
+  }
   return true;
 }
 
