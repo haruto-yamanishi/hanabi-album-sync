@@ -2,6 +2,8 @@ import crypto from "node:crypto";
 
 const SLACK_API = "https://slack.com/api";
 
+type SlackShares = Record<string, Record<string, Array<{ ts?: string }>>>;
+
 export type SlackFile = {
   id: string;
   name: string;
@@ -10,6 +12,7 @@ export type SlackFile = {
   url_private_download?: string;
   url_private?: string;
   timestamp?: number;
+  shares?: SlackShares;
 };
 
 export type SlackMessage = {
@@ -114,16 +117,22 @@ export async function uploadSlackResult(channel: string, filename: string, bytes
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
     body: form
   });
-  const data = await response.json() as { ok: boolean; error?: string; files?: Array<Record<string, unknown>> };
+  const data = await response.json() as { ok: boolean; error?: string; files?: SlackFile[] };
   if (!data.ok) throw new Error(`Slack files.completeUploadExternal: ${data.error}`);
-  return { fileId: upload.file_id, messageTs: extractShareTs(data.files, channel) };
+
+  // completeUploadExternal's normal response can omit share metadata. files.info after
+  // completion exposes the channel share timestamp, which we persist for audit/history.
+  const completedFile = await getSlackFile(upload.file_id).catch(() => null);
+  return {
+    fileId: upload.file_id,
+    messageTs: extractShareTs(completedFile ? [completedFile] : data.files, channel)
+  };
 }
 
-function extractShareTs(files: Array<Record<string, unknown>> | undefined, channel: string) {
+function extractShareTs(files: SlackFile[] | undefined, channel: string) {
   for (const file of files ?? []) {
-    const shares = file.shares as Record<string, Record<string, Array<{ ts?: string }>>> | undefined;
     for (const kind of ["public", "private"]) {
-      const ts = shares?.[kind]?.[channel]?.[0]?.ts;
+      const ts = file.shares?.[kind]?.[channel]?.[0]?.ts;
       if (ts) return ts;
     }
   }
