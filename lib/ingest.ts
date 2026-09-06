@@ -56,25 +56,38 @@ export async function ingestSlackReply(input: { channelId: string; parentTs: str
 
   for (const listed of reply.files) {
     let assetId: string | null = null;
-    const { data: existingSource } = await db.from("slack_file_sources")
-      .select("asset_id")
-      .eq("slack_file_id", listed.id)
-      .maybeSingle();
-
-    if (existingSource?.asset_id) {
-      assetId = existingSource.asset_id;
-      const { data: existingAsset } = await db.from("assets")
-        .select("id,state")
-        .eq("id", assetId)
-        .maybeSingle();
-      if (existingAsset?.state === "SYNCED" || existingAsset?.state === "ARCHIVED") {
-        assetIds.push(assetId);
-        skipped += 1;
-        continue;
-      }
-    }
 
     try {
+      const { data: source, error: sourceError } = await db.from("slack_file_sources")
+        .select("asset_id")
+        .eq("slack_file_id", listed.id)
+        .maybeSingle();
+      if (sourceError) throw sourceError;
+
+      if (source?.asset_id) {
+        assetId = source.asset_id;
+        const [{ data: existingAsset, error: existingAssetError }, { data: existingDrive, error: existingDriveError }] = await Promise.all([
+          db.from("assets").select("id,state").eq("id", assetId).single(),
+          db.from("drive_objects").select("drive_file_id").eq("asset_id", assetId).maybeSingle()
+        ]);
+        if (existingAssetError) throw existingAssetError;
+        if (existingDriveError) throw existingDriveError;
+
+        if (existingDrive?.drive_file_id || existingAsset.state === "SYNCED") {
+          if (existingDrive?.drive_file_id && existingAsset.state !== "SYNCED") {
+            await db.from("assets").update({ state: "SYNCED", warning: null }).eq("id", assetId);
+          }
+          assetIds.push(assetId);
+          skipped += 1;
+          continue;
+        }
+
+        const { error: retryStateError } = await db.from("assets")
+          .update({ state: "FETCHING", warning: null })
+          .eq("id", assetId);
+        if (retryStateError) throw retryStateError;
+      }
+
       const file = await getSlackFile(listed.id);
       const bytes = await downloadSlackFile(file);
       const checksum = sha256(bytes);
@@ -83,7 +96,20 @@ export async function ingestSlackReply(input: { channelId: string; parentTs: str
       const mimeType = file.mimetype || "application/octet-stream";
       const mediaType = mimeType.startsWith("video/") ? "video" : mimeType.startsWith("image/") ? "image" : "other";
 
-      if (!assetId) {
+      if (assetId) {
+        const { error: assetUpdateError } = await db.from("assets").update({
+          submission_id: submission.id,
+          category,
+          media_type: mediaType,
+          original_name: file.name || file.id,
+          mime_type: mimeType,
+          bytes: bytes.byteLength,
+          checksum,
+          state: "UPLOADING",
+          warning: null
+        }).eq("id", assetId);
+        if (assetUpdateError) throw assetUpdateError;
+      } else {
         const { data: asset, error: assetError } = await db.from("assets").insert({
           submission_id: submission.id,
           category,
@@ -97,24 +123,12 @@ export async function ingestSlackReply(input: { channelId: string; parentTs: str
         if (assetError) throw assetError;
         assetId = asset.id;
 
-        const { error: sourceError } = await db.from("slack_file_sources").insert({
+        const { error: sourceInsertError } = await db.from("slack_file_sources").insert({
           asset_id: assetId,
           slack_file_id: file.id,
           created_at: created.toISOString()
         });
-        if (sourceError) throw sourceError;
-      } else {
-        await db.from("assets").update({
-          submission_id: submission.id,
-          category,
-          media_type: mediaType,
-          original_name: file.name || file.id,
-          mime_type: mimeType,
-          bytes: bytes.byteLength,
-          checksum,
-          state: "UPLOADING",
-          warning: null
-        }).eq("id", assetId);
+        if (sourceInsertError) throw sourceInsertError;
       }
 
       const uploaded = await uploadDriveResumable({ name: storedName, mimeType, parentId: categoryFolder, bytes });
@@ -126,14 +140,18 @@ export async function ingestSlackReply(input: { channelId: string; parentTs: str
       }, { onConflict: "asset_id" });
       if (driveError) throw driveError;
 
-      await db.from("assets").update({ state: "SYNCED", warning: null }).eq("id", assetId);
+      const { error: syncedError } = await db.from("assets").update({ state: "SYNCED", warning: null }).eq("id", assetId);
+      if (syncedError) throw syncedError;
       assetIds.push(assetId);
       synced += 1;
     } catch (error) {
       failed += 1;
       const message = error instanceof Error ? error.message : String(error);
       if (assetId) {
-        await db.from("assets").update({ state: "FAILED_RETRYABLE", warning: message }).eq("id", assetId);
+        await db.from("assets")
+          .update({ state: "FAILED_RETRYABLE", warning: message.slice(0, 500) })
+          .eq("id", assetId)
+          .catch(() => undefined);
       }
       console.error("asset ingest failed", { slack_file_id: listed.id, asset_id: assetId, error });
     }

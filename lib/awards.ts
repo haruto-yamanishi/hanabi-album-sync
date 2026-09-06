@@ -1,11 +1,14 @@
+import crypto from "node:crypto";
 import { createServiceClient } from "@/lib/supabase/server";
 import { fetchDriveMedia } from "@/lib/drive";
-import { postSlackMessage, uploadSlackResult } from "@/lib/slack";
+import { uploadSlackResult } from "@/lib/slack";
+
+const POSTING_LEASE_MS = 10 * 60 * 1000;
 
 export async function publishAward(awardId: string) {
   const db = createServiceClient();
   const { data: award, error } = await db.from("award_records").select(`
-    id, award_type, notify_status, slack_result_ts, result_history,
+    id, award_type, notify_status, notify_started_at, notify_lease_id, slack_result_ts, result_history,
     category,
     week:competition_weeks(year,week_no),
     asset:assets(id,original_name,mime_type,category,
@@ -16,12 +19,26 @@ export async function publishAward(awardId: string) {
   if (error) throw error;
   if (award.notify_status === "POSTED") return award;
 
-  const { data: claimed } = await db.from("award_records")
-    .update({ notify_status: "POSTING", notify_error: null })
+  const claimable = ["QUEUED", "FAILED", "POSTING"].includes(award.notify_status);
+  if (!claimable) return award;
+  if (award.notify_status === "POSTING" && !isLeaseStale(award.notify_started_at)) return award;
+
+  const leaseId = crypto.randomUUID();
+  let claim = db.from("award_records")
+    .update({
+      notify_status: "POSTING",
+      notify_error: null,
+      notify_started_at: new Date().toISOString(),
+      notify_lease_id: leaseId
+    })
     .eq("id", awardId)
-    .in("notify_status", ["QUEUED", "FAILED"])
-    .select("id")
-    .maybeSingle();
+    .eq("notify_status", award.notify_status);
+
+  claim = award.notify_lease_id
+    ? claim.eq("notify_lease_id", award.notify_lease_id)
+    : claim.is("notify_lease_id", null);
+
+  const { data: claimed } = await claim.select("id").maybeSingle();
   if (!claimed) return award;
 
   const channel = process.env.SLACK_CHANNEL_ID || "C093FCBUZC7";
@@ -44,35 +61,36 @@ export async function publishAward(awardId: string) {
   ].filter(Boolean).join("\n");
 
   try {
-    let resultTs: string | null = null;
-    let resultFileId: string | null = null;
-    try {
-      const media = await fetchDriveMedia(drive.drive_file_id);
-      if (!media.ok) throw new Error(`Drive media fetch failed: ${media.status}`);
-      const bytes = Buffer.from(await media.arrayBuffer());
-      const uploaded = await uploadSlackResult(channel, asset.original_name, bytes, text);
-      resultTs = uploaded.messageTs;
-      resultFileId = uploaded.fileId;
-    } catch (uploadError) {
-      console.error("Slack winner media upload failed; falling back to text", uploadError);
-      const fallback = `${text}\nDrive原本: https://drive.google.com/open?id=${drive.drive_file_id}`;
-      const posted = await postSlackMessage(channel, fallback);
-      resultTs = posted.ts;
-    }
+    const media = await fetchDriveMedia(drive.drive_file_id);
+    if (!media.ok) throw new Error(`Drive media fetch failed: ${media.status}`);
+    const bytes = Buffer.from(await media.arrayBuffer());
+    const uploaded = await uploadSlackResult(channel, asset.original_name, bytes, text);
+    const resultTs = uploaded.messageTs;
+    const resultFileId = uploaded.fileId;
 
     await db.from("award_records").update({
       notify_status: "POSTED",
+      notify_started_at: null,
+      notify_lease_id: null,
       slack_result_ts: resultTs,
       slack_result_file_id: resultFileId,
       result_history: [...history, { ts: resultTs, file_id: resultFileId, asset_id: asset.id, posted_at: new Date().toISOString() }]
-    }).eq("id", awardId);
+    }).eq("id", awardId).eq("notify_lease_id", leaseId);
   } catch (notifyError) {
     await db.from("award_records").update({
       notify_status: "FAILED",
+      notify_started_at: null,
+      notify_lease_id: null,
       notify_error: notifyError instanceof Error ? notifyError.message : String(notifyError)
-    }).eq("id", awardId);
+    }).eq("id", awardId).eq("notify_lease_id", leaseId);
     throw notifyError;
   }
+}
+
+function isLeaseStale(startedAt: string | null | undefined) {
+  if (!startedAt) return true;
+  const started = new Date(startedAt).getTime();
+  return !Number.isFinite(started) || Date.now() - started >= POSTING_LEASE_MS;
 }
 
 function unwrap<T>(value: T | T[] | null): T {

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 const SLACK_API = "https://slack.com/api";
+const MAX_SLACK_ATTEMPTS = 3;
 
 type SlackShares = Record<string, Record<string, Array<{ ts?: string }>>>;
 
@@ -41,24 +42,49 @@ export function verifySlackSignature(rawBody: string, headers: Headers) {
 
 export async function slackApi<T>(method: string, params: Record<string, string | number | undefined> = {}) {
   const token = required("SLACK_BOT_TOKEN");
-  const body = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => value !== undefined && body.set(key, String(value)));
-  const response = await fetch(`${SLACK_API}/${method}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
-    body,
-    cache: "no-store"
-  });
-  const data = await response.json() as T & { ok: boolean; error?: string };
-  if (!data.ok) throw new Error(`Slack ${method}: ${data.error ?? response.statusText}`);
-  return data;
+
+  for (let attempt = 1; attempt <= MAX_SLACK_ATTEMPTS; attempt += 1) {
+    const body = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => value !== undefined && body.set(key, String(value)));
+    const response = await fetch(`${SLACK_API}/${method}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+      cache: "no-store"
+    });
+
+    if (response.status === 429 && attempt < MAX_SLACK_ATTEMPTS) {
+      await sleep(retryAfterMs(response.headers));
+      continue;
+    }
+
+    const data = await response.json() as T & { ok: boolean; error?: string };
+    if (!data.ok) {
+      if (data.error === "ratelimited" && attempt < MAX_SLACK_ATTEMPTS) {
+        await sleep(retryAfterMs(response.headers));
+        continue;
+      }
+      throw new Error(`Slack ${method}: ${data.error ?? response.statusText}`);
+    }
+    return data;
+  }
+
+  throw new Error(`Slack ${method}: retry exhausted`);
 }
 
 export async function getSlackThread(channel: string, parentTs: string) {
-  const result = await slackApi<{ messages: SlackMessage[] }>("conversations.replies", {
-    channel, ts: parentTs, limit: 200, inclusive: 1
-  });
-  return result.messages;
+  const messages: SlackMessage[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const result = await slackApi<{ messages: SlackMessage[]; response_metadata?: { next_cursor?: string } }>("conversations.replies", {
+      channel, ts: parentTs, limit: 200, inclusive: 1, cursor
+    });
+    messages.push(...(result.messages ?? []));
+    cursor = result.response_metadata?.next_cursor || undefined;
+  } while (cursor);
+
+  return messages;
 }
 
 export async function getSlackPermalink(channel: string, messageTs: string) {
@@ -120,8 +146,8 @@ export async function uploadSlackResult(channel: string, filename: string, bytes
   const data = await response.json() as { ok: boolean; error?: string; files?: SlackFile[] };
   if (!data.ok) throw new Error(`Slack files.completeUploadExternal: ${data.error}`);
 
-  // completeUploadExternal's normal response can omit share metadata. files.info after
-  // completion exposes the channel share timestamp, which we persist for audit/history.
+  // completeUploadExternal can omit share metadata. files.info after completion
+  // exposes the channel share timestamp, which we persist for audit/history.
   const completedFile = await getSlackFile(upload.file_id).catch(() => null);
   return {
     fileId: upload.file_id,
@@ -137,6 +163,15 @@ function extractShareTs(files: SlackFile[] | undefined, channel: string) {
     }
   }
   return null;
+}
+
+function retryAfterMs(headers: Headers) {
+  const seconds = Number(headers.get("retry-after") || "1");
+  return Math.max(1, Number.isFinite(seconds) ? seconds : 1) * 1000;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function required(name: string) {
