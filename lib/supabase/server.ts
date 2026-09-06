@@ -12,7 +12,7 @@ export async function createUserClient() {
   const cookieStore = await cookies();
   return createServerClient(
     required("NEXT_PUBLIC_SUPABASE_URL"),
-    required("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
+    requiredAny("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY"),
     {
       cookies: {
         getAll: () => cookieStore.getAll(),
@@ -31,7 +31,7 @@ export async function createUserClient() {
 export function createServiceClient() {
   return createClient(
     required("NEXT_PUBLIC_SUPABASE_URL"),
-    required("SUPABASE_SERVICE_ROLE_KEY"),
+    requiredAny("SUPABASE_SECRET_KEY", "SUPABASE_SERVICE_ROLE_KEY"),
     { auth: { persistSession: false, autoRefreshToken: false } }
   );
 }
@@ -39,5 +39,13 @@ export function createServiceClient() {
 function required(name: string) {
   const value = process.env[name];
   if (!value) throw new Error(`Missing environment variable: ${name}`);
+  return value;
+}
+
+function requiredAny(primary: string, legacy: string) {
+  const value = process.env[primary] ?? process.env[legacy];
+  if (!value) {
+    throw new Error(`Missing environment variable: ${primary} (or legacy ${legacy})`);
+  }
   return value;
 }
