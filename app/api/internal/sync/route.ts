@@ -11,10 +11,33 @@ export async function POST(request: Request) {
   if (error) return NextResponse.json({ error: error.message }, { status: 404 });
   if (job.state === "SUCCEEDED") return NextResponse.json({ ok: true, skipped: true });
 
-  await db.from("sync_jobs").update({ state: "RUNNING", attempt: (job.attempt ?? 0) + 1, started_at: new Date().toISOString() }).eq("id", jobId);
+  await db.from("sync_jobs").update({
+    state: "RUNNING",
+    attempt: (job.attempt ?? 0) + 1,
+    started_at: new Date().toISOString(),
+    finished_at: null
+  }).eq("id", jobId);
+
   try {
     const result = await ingestSlackReply({ channelId: job.channel_id, parentTs: job.parent_ts, messageTs: job.message_ts });
-    await db.from("sync_jobs").update({ state: "SUCCEEDED", finished_at: new Date().toISOString(), result }).eq("id", jobId);
+    if (result.failed > 0) {
+      const message = `${result.failed} asset(s) failed to sync`;
+      await db.from("sync_jobs").update({
+        state: "FAILED",
+        error_message: message,
+        result,
+        finished_at: new Date().toISOString()
+      }).eq("id", jobId);
+      return NextResponse.json({ error: message, result }, { status: 500 });
+    }
+
+    await db.from("sync_jobs").update({
+      state: "SUCCEEDED",
+      error_code: null,
+      error_message: null,
+      finished_at: new Date().toISOString(),
+      result
+    }).eq("id", jobId);
     return NextResponse.json({ ok: true, result });
   } catch (syncError) {
     const message = syncError instanceof Error ? syncError.message : String(syncError);
