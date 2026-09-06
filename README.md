@@ -20,12 +20,18 @@ Slack `#02_課外_frc_ベストショットコンペ` の Snaps / Shorts / Films
 
 ## 1. Supabase
 
-Supabase projectを作成し、SQL EditorまたはCLIで `supabase/migrations/0001_init.sql` を適用してください。Auth > ProvidersでGoogleを有効化し、callback URLに以下を追加します。
+Supabase projectを用意し、SQL EditorまたはCLIで `supabase/migrations/0001_init.sql` を適用してください。
+
+Hanabi-Logと同じSupabase projectを共用できます。Hanabi-Log側の既存テーブル（`members`, `reports`, `attachments`, `outbox_jobs` など）とAlbum-Sync側のテーブル（`contributors`, `competition_weeks`, `submissions`, `assets`, `award_records`, `sync_jobs`, `migration_runs` など）は名前が衝突しないため、同じPostgreSQL database内で共存できます。Album-Syncのmigrationは既存Hanabi-Logテーブルを変更しません。
+
+Auth > ProvidersでGoogleを有効化し、callback URLに以下を追加します。
 
 ```
 https://YOUR_DOMAIN/auth/callback
 http://localhost:3000/auth/callback
 ```
+
+Supabaseの現在のAPI key体系では、ブラウザ側はPublishable key、サーバー側はSecret keyを使います。Album-Syncは旧 `anon` / `service_role` keyもfallbackとして受け付けます。
 
 ## 2. Google Drive
 
@@ -63,6 +69,16 @@ QStash未設定時、新規SlackイベントはDBにQUEUEDとして残ります�
 ## 5. Environment
 
 `.env.example` を `.env.local` へコピーして埋めます。`ADMIN_EMAILS` と `JUDGE_EMAILS` はカンマ区切りです。
+
+Supabaseは次の3値が最低限必要です。
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+SUPABASE_SECRET_KEY=sb_secret_...
+```
+
+Secret keyはGitHubへcommitしないでください。
 
 ## 6. Run
 
