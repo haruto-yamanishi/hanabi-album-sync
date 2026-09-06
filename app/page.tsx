@@ -51,7 +51,6 @@ export default async function AlbumPage({ searchParams }: { searchParams: Promis
 
   return <main className="shell">
     <header className="topbar"><div><p className="eyebrow">Team Hanabi / Media Archive</p><h1>Album-Sync</h1></div><nav><span>{user.email}</span>{role === "admin" && <a href="/admin">Admin</a>}</nav></header>
-    <section className="hero"><h2>Slackに投げる。<br/>あとは全部、残る。</h2><p>Snaps / Shorts / Films をDriveへ同期し、週・投稿者・受賞履歴ごとに辿れるアルバム。</p></section>
     <form className="filters" action="/" method="get">
       <label>Category<select name="category" defaultValue={selectedCategory}><option value="">All</option><option value="snaps">Snaps</option><option value="shorts">Shorts</option><option value="films">Films</option></select></label>
       <label>Week<select name="week" defaultValue={selectedWeek}><option value="">All</option>{weeks.map((week) => <option key={week} value={week}>{week}</option>)}</select></label>
