@@ -55,11 +55,23 @@ export async function ingestSlackReply(input: { channelId: string; parentTs: str
   let failed = 0;
 
   for (const listed of reply.files) {
-    const { data: existing } = await db.from("slack_file_sources").select("asset_id").eq("slack_file_id", listed.id).maybeSingle();
-    if (existing?.asset_id) {
-      assetIds.push(existing.asset_id);
-      skipped += 1;
-      continue;
+    let assetId: string | null = null;
+    const { data: existingSource } = await db.from("slack_file_sources")
+      .select("asset_id")
+      .eq("slack_file_id", listed.id)
+      .maybeSingle();
+
+    if (existingSource?.asset_id) {
+      assetId = existingSource.asset_id;
+      const { data: existingAsset } = await db.from("assets")
+        .select("id,state")
+        .eq("id", assetId)
+        .maybeSingle();
+      if (existingAsset?.state === "SYNCED" || existingAsset?.state === "ARCHIVED") {
+        assetIds.push(assetId);
+        skipped += 1;
+        continue;
+      }
     }
 
     try {
@@ -71,27 +83,59 @@ export async function ingestSlackReply(input: { channelId: string; parentTs: str
       const mimeType = file.mimetype || "application/octet-stream";
       const mediaType = mimeType.startsWith("video/") ? "video" : mimeType.startsWith("image/") ? "image" : "other";
 
-      const { data: asset, error: assetError } = await db.from("assets").insert({
-        submission_id: submission.id,
-        category,
-        media_type: mediaType,
-        original_name: file.name || file.id,
-        mime_type: mimeType,
-        bytes: bytes.byteLength,
-        checksum,
-        state: "UPLOADING"
-      }).select("id").single();
-      if (assetError) throw assetError;
+      if (!assetId) {
+        const { data: asset, error: assetError } = await db.from("assets").insert({
+          submission_id: submission.id,
+          category,
+          media_type: mediaType,
+          original_name: file.name || file.id,
+          mime_type: mimeType,
+          bytes: bytes.byteLength,
+          checksum,
+          state: "UPLOADING"
+        }).select("id").single();
+        if (assetError) throw assetError;
+        assetId = asset.id;
 
-      await db.from("slack_file_sources").insert({ asset_id: asset.id, slack_file_id: file.id, created_at: created.toISOString() });
+        const { error: sourceError } = await db.from("slack_file_sources").insert({
+          asset_id: assetId,
+          slack_file_id: file.id,
+          created_at: created.toISOString()
+        });
+        if (sourceError) throw sourceError;
+      } else {
+        await db.from("assets").update({
+          submission_id: submission.id,
+          category,
+          media_type: mediaType,
+          original_name: file.name || file.id,
+          mime_type: mimeType,
+          bytes: bytes.byteLength,
+          checksum,
+          state: "UPLOADING",
+          warning: null
+        }).eq("id", assetId);
+      }
+
       const uploaded = await uploadDriveResumable({ name: storedName, mimeType, parentId: categoryFolder, bytes });
-      await db.from("drive_objects").insert({ asset_id: asset.id, drive_file_id: uploaded.id, parent_folder_id: categoryFolder, stored_name: storedName });
-      await db.from("assets").update({ state: "SYNCED" }).eq("id", asset.id);
-      assetIds.push(asset.id);
+      const { error: driveError } = await db.from("drive_objects").upsert({
+        asset_id: assetId,
+        drive_file_id: uploaded.id,
+        parent_folder_id: categoryFolder,
+        stored_name: storedName
+      }, { onConflict: "asset_id" });
+      if (driveError) throw driveError;
+
+      await db.from("assets").update({ state: "SYNCED", warning: null }).eq("id", assetId);
+      assetIds.push(assetId);
       synced += 1;
     } catch (error) {
       failed += 1;
-      console.error("asset ingest failed", { slack_file_id: listed.id, error });
+      const message = error instanceof Error ? error.message : String(error);
+      if (assetId) {
+        await db.from("assets").update({ state: "FAILED_RETRYABLE", warning: message }).eq("id", assetId);
+      }
+      console.error("asset ingest failed", { slack_file_id: listed.id, asset_id: assetId, error });
     }
   }
 
