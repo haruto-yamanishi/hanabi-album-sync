@@ -67,7 +67,7 @@ export default async function AlbumPage({ searchParams }: { searchParams: Promis
 
   return <main className="shell">
     <header className="topbar"><div><p className="eyebrow">FRC TEAM 9494 / HANABI</p><h1>Album-Sync<span className="title-dot">.</span></h1></div><nav aria-label="メインナビゲーション"><a href="https://log.9494hanabi.com">Hanabi Log ↗</a><span>{user.email}</span>{role === "admin" && <a href="/admin">Admin</a>}</nav></header>
-    <div className="archive-heading"><div><p className="eyebrow">OUR MOMENTS</p><h2>挑戦の日々を、ここに。</h2><p>チームの活動を、写真と映像で振り返る。</p></div><span className="archive-label">MEDIA ARCHIVE</span></div>
+    <div className="archive-heading"><h2>アルバム</h2></div>
     <form className="filters" action="/" method="get">
       <label>カテゴリ<select name="category" defaultValue={selectedCategory}><option value="">すべて</option><option value="snaps">Snaps</option><option value="shorts">Shorts</option><option value="films">Films</option></select></label>
       <label>活動週<select name="week" defaultValue={selectedWeek}><option value="">すべて</option>{weeks.map((week) => <option key={week} value={week}>{week}</option>)}</select></label>

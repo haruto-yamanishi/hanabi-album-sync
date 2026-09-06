@@ -31,10 +31,7 @@ h1, h2, p { margin-top: 0; }
 .topbar nav a { font-weight: 700; }
 .eyebrow { font-family: var(--font-latin); font-size: 10px; letter-spacing: .16em; font-weight: 800; margin: 0; }
 .archive-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding: 40px 0 28px; }
-.archive-heading .eyebrow { color: var(--accent); margin-bottom: 12px; }
 .archive-heading h2 { color: var(--navy); font-size: clamp(24px, 3.4vw, 40px); letter-spacing: -.04em; line-height: 1.4; margin-bottom: 10px; }
-.archive-heading p:last-child { color: var(--muted); font-size: 13px; margin-bottom: 0; }
-.archive-label { color: var(--navy); font-family: var(--font-latin); font-size: 11px; letter-spacing: .12em; border-bottom: 4px solid var(--accent); padding-bottom: 8px; white-space: nowrap; }
 .filters { display: grid; grid-template-columns: repeat(4, minmax(100px, 1fr)) minmax(190px, 2fr) auto auto; gap: 12px; align-items: end; padding: 20px; background: var(--surface-soft); border-top: 3px solid var(--navy); }
 .filters label { display: grid; gap: 7px; font-size: 11px; font-weight: 700; min-width: 0; }
 .filters select, .filters input { width: 100%; min-height: 44px; min-width: 0; border: 1px solid var(--line-strong); background: white; padding: 8px 10px; font-size: 13px; }
@@ -95,7 +92,6 @@ h1, h2, p { margin-top: 0; }
   .topbar nav { margin-top: 16px; gap: 10px 16px; }
   .topbar nav span { width: 100%; order: 1; }
   .archive-heading { padding: 28px 0 22px; }
-  .archive-label { display: none; }
   .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 14px; }
   .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 12px; }
   .meta { padding: 12px; }
