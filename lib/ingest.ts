@@ -77,7 +77,7 @@ export async function ingestSlackReply(input: { channelId: string; parentTs: str
           if (existingDrive?.drive_file_id && existingAsset.state !== "SYNCED") {
             await db.from("assets").update({ state: "SYNCED", warning: null }).eq("id", assetId);
           }
-          assetIds.push(assetId);
+          assetIds.push(source.asset_id);
           skipped += 1;
           continue;
         }
@@ -131,27 +131,29 @@ export async function ingestSlackReply(input: { channelId: string; parentTs: str
         if (sourceInsertError) throw sourceInsertError;
       }
 
+      if (!assetId) throw new Error(`Asset ID missing for Slack file ${listed.id}`);
+      const persistedAssetId = assetId;
       const uploaded = await uploadDriveResumable({ name: storedName, mimeType, parentId: categoryFolder, bytes });
       const { error: driveError } = await db.from("drive_objects").upsert({
-        asset_id: assetId,
+        asset_id: persistedAssetId,
         drive_file_id: uploaded.id,
         parent_folder_id: categoryFolder,
         stored_name: storedName
       }, { onConflict: "asset_id" });
       if (driveError) throw driveError;
 
-      const { error: syncedError } = await db.from("assets").update({ state: "SYNCED", warning: null }).eq("id", assetId);
+      const { error: syncedError } = await db.from("assets").update({ state: "SYNCED", warning: null }).eq("id", persistedAssetId);
       if (syncedError) throw syncedError;
-      assetIds.push(assetId);
+      assetIds.push(persistedAssetId);
       synced += 1;
     } catch (error) {
       failed += 1;
       const message = error instanceof Error ? error.message : String(error);
       if (assetId) {
-        await db.from("assets")
+        const { error: markFailedError } = await db.from("assets")
           .update({ state: "FAILED_RETRYABLE", warning: message.slice(0, 500) })
-          .eq("id", assetId)
-          .catch(() => undefined);
+          .eq("id", assetId);
+        if (markFailedError) console.error("failed to mark asset retryable", { asset_id: assetId, error: markFailedError });
       }
       console.error("asset ingest failed", { slack_file_id: listed.id, asset_id: assetId, error });
     }
