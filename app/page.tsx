@@ -11,7 +11,9 @@ export default async function AlbumPage({ searchParams }: { searchParams: Promis
   const selectedCategory = scalar(params.category);
   const selectedWeek = scalar(params.week);
   const selectedContributor = scalar(params.contributor);
-  const selectedAward = scalar(params.award);
+  const requestedAward = scalar(params.award);
+  const canJudge = role === "judge" || role === "admin";
+  const selectedAward = requestedAward === "shortlist" && !canJudge ? "" : requestedAward;
   const query = scalar(params.q).trim().toLowerCase();
 
   const db = createServiceClient();
@@ -31,8 +33,9 @@ export default async function AlbumPage({ searchParams }: { searchParams: Promis
     const week = Array.isArray(submission?.week) ? submission.week[0] : submission?.week;
     const drive = Array.isArray(asset.drive) ? asset.drive[0] : asset.drive;
     const winner = (asset.awards ?? []).find((award: any) => award.award_type === "winner");
+    const shortlist = (asset.awards ?? []).find((award: any) => award.award_type === "shortlist");
     const weekKey = week ? `${week.year}-W${String(week.week_no).padStart(2, "0")}` : "";
-    return { asset, submission, contributor, week, drive, winner, weekKey };
+    return { asset, submission, contributor, week, drive, winner, shortlist, weekKey };
   });
 
   const weeks = [...new Set(normalized.map((item) => item.weekKey).filter((week): week is string => Boolean(week)))].sort().reverse();
@@ -42,6 +45,7 @@ export default async function AlbumPage({ searchParams }: { searchParams: Promis
     if (selectedWeek && item.weekKey !== selectedWeek) return false;
     if (selectedContributor && item.contributor?.display_name !== selectedContributor) return false;
     if (selectedAward === "winner" && !item.winner) return false;
+    if (selectedAward === "shortlist" && !item.shortlist) return false;
     if (query) {
       const haystack = [item.asset.original_name, item.submission?.caption, item.contributor?.display_name, item.weekKey, item.asset.category]
         .filter(Boolean).join(" ").toLowerCase();
@@ -58,7 +62,7 @@ export default async function AlbumPage({ searchParams }: { searchParams: Promis
   function pageHref(target: number) {
     const next = new URLSearchParams();
     for (const key of ["category", "week", "contributor", "award", "q"]) {
-      const value = scalar(params[key]);
+      const value = key === "award" ? selectedAward : scalar(params[key]);
       if (value) next.set(key, value);
     }
     next.set("page", String(target));
@@ -72,7 +76,7 @@ export default async function AlbumPage({ searchParams }: { searchParams: Promis
       <label>カテゴリ<select name="category" defaultValue={selectedCategory}><option value="">すべて</option><option value="snaps">Snaps</option><option value="shorts">Shorts</option><option value="films">Films</option></select></label>
       <label>活動週<select name="week" defaultValue={selectedWeek}><option value="">すべて</option>{weeks.map((week) => <option key={week} value={week}>{week}</option>)}</select></label>
       <label>投稿者<select name="contributor" defaultValue={selectedContributor}><option value="">すべて</option>{contributors.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
-      <label>受賞<select name="award" defaultValue={selectedAward}><option value="">すべて</option><option value="winner">Winner</option></select></label>
+      <label>受賞<select name="award" defaultValue={selectedAward}><option value="">すべて</option>{canJudge && <option value="shortlist">Shortlist</option>}<option value="winner">Winner</option></select></label>
       <label className="search-field">検索<input type="search" name="q" defaultValue={scalar(params.q)} placeholder="キャプション・ファイル名・投稿者" /></label>
       <button type="submit">絞り込む</button>
       {(selectedCategory || selectedWeek || selectedContributor || selectedAward || query) && <a className="clear-filter" href="/">クリア</a>}
@@ -80,17 +84,18 @@ export default async function AlbumPage({ searchParams }: { searchParams: Promis
     <p className="result-count">{filtered.length}件{filtered.length > 0 && ` · ${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, filtered.length)}件を表示`}{normalized.length === 500 && "（最新500件から検索）"}</p>
     {error && <p className="error">{error.message}</p>}
     <section className="grid">
-      {visible.map(({ asset, submission, contributor, drive, winner, weekKey }) => <article className="asset" id={`asset-${asset.id}`} key={asset.id}>
+      {visible.map(({ asset, submission, contributor, drive, winner, shortlist, weekKey }) => <article className="asset" id={`asset-${asset.id}`} key={asset.id}>
         <div className="media">
           <AssetMedia assetId={asset.id} mediaType={asset.media_type} name={asset.original_name} />
           <span className={`category ${asset.category}`}>{asset.category}</span>
           {winner && <span className="award">WINNER</span>}
+          {canJudge && shortlist && !winner && <span className="award shortlist">SHORTLIST</span>}
         </div>
         <div className="meta">
           <div className="meta-line"><strong>{contributor?.display_name ?? "Unknown"}</strong><span>{weekKey}</span></div>
           {submission?.caption && <p>{submission.caption}</p>}
           <div className="links">{submission?.permalink && <a href={submission.permalink} target="_blank" rel="noopener noreferrer">Slack</a>}{drive?.drive_file_id && <a href={`https://drive.google.com/open?id=${drive.drive_file_id}`} target="_blank" rel="noopener noreferrer">Drive</a>}</div>
-          {(role === "judge" || role === "admin") && <AdminAssetActions assetId={asset.id} canJudge canAdmin={role === "admin"} />}
+          {canJudge && <AdminAssetActions assetId={asset.id} canJudge canAdmin={role === "admin"} />}
         </div>
       </article>)}
     </section>
